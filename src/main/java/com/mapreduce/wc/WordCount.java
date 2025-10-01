@@ -115,6 +115,7 @@ public class WordCount {
         int mostFrequentWordCount = 0;
         String lessFrequentWord = null;
         int lessFrequentWordCount = Integer.MAX_VALUE;
+        int totalSum = 0;
 
         public void reduce(Text word, Iterable<IntWritable> values, Context con) throws IOException, InterruptedException {
             int sum = 0;
@@ -122,6 +123,8 @@ public class WordCount {
             for (IntWritable value : values) {
                 sum += value.get();
             }
+
+            totalSum += sum;
 
             if (sum > mostFrequentWordCount) {
                 mostFrequentWordCount = sum;
@@ -143,6 +146,8 @@ public class WordCount {
 
             context.write(new Text("Least Frequent Word(s)"), new IntWritable(lessFrequentWordCount));
             context.write(new Text(lessFrequentWord), new IntWritable(lessFrequentWordCount));
+
+            context.write(new Text("Total Word Count"), new IntWritable(totalSum));
         }
     }
 }
