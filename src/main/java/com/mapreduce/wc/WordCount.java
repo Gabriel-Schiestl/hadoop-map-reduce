@@ -2,11 +2,8 @@ package com.mapreduce.wc;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-import org.apache.commons.collections.map.HashedMap;
 import org.apache.hadoop.conf.Configuration;
 
 import org.apache.hadoop.fs.Path;
@@ -96,7 +93,7 @@ public class WordCount {
         private final Text wordText = new Text();
 
         public void map(LongWritable key, Text value, Context con) throws IOException, InterruptedException {
-            List<String[]> normalizedColumns = WordCount.normalizer.normalize(wordText);
+            List<String[]> normalizedColumns = WordCount.normalizer.normalize(value);
 
             for (String[] normalizedColumn : normalizedColumns) {
                 String[] words = normalizedColumn[1].split("\\s+");
