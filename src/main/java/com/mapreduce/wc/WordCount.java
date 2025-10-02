@@ -1,9 +1,7 @@
 package com.mapreduce.wc;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 import org.apache.hadoop.conf.Configuration;
 
@@ -120,10 +118,14 @@ public class WordCount {
     }
 
     public static class ReduceForListTopDescriptions extends Reducer<Text, IntWritable, Text, IntWritable> {
-        String mostFrequentWord = null;
-        int mostFrequentWordCount = 0;
-        String lessFrequentWord = null;
-        int lessFrequentWordCount = Integer.MAX_VALUE;
+        Map<Integer, String> top5MostFrequentDescriptions = new HashMap<Integer, String>(5);
+        Map<Integer, String> top5LessFrequentDescriptions = new HashMap<Integer, String>() {{
+            put(Integer.MAX_VALUE, "");
+            put(Integer.MAX_VALUE - 1, "");
+            put(Integer.MAX_VALUE - 2, "");
+            put(Integer.MAX_VALUE - 3, "");
+            put(Integer.MAX_VALUE - 4, "");
+        }};
         int totalSum = 0;
 
         public void reduce(Text word, Iterable<IntWritable> values, Context con) throws IOException, InterruptedException {
@@ -135,49 +137,50 @@ public class WordCount {
 
             totalSum += sum;
 
-            if (sum > mostFrequentWordCount) {
-                mostFrequentWordCount = sum;
-                mostFrequentWord = word.toString();
-            } 
-            if (sum == mostFrequentWordCount) {
-                mostFrequentWord = mostFrequentWord.concat(", ").concat(word.toString());
-            } 
-            if (sum < lessFrequentWordCount) {
-                lessFrequentWordCount = sum;
-                lessFrequentWord = word.toString();
+            if(top5MostFrequentDescriptions.size() < 5) {
+                top5MostFrequentDescriptions.put(sum, word.toString());
+            } else {
+                int minKey = Collections.min(top5MostFrequentDescriptions.keySet());
+                if (sum > minKey) {
+                    top5MostFrequentDescriptions.remove(minKey);
+                    top5MostFrequentDescriptions.put(sum, word.toString());
+                } else if (sum == minKey) {
+                    top5MostFrequentDescriptions.compute(minKey, (k, existingWords) -> existingWords.concat(", ").concat(word.toString()));
+                }
             }
-            if (sum == lessFrequentWordCount) {
-                lessFrequentWord = lessFrequentWord.concat(", ").concat(word.toString());
+
+            if(top5LessFrequentDescriptions.size() < 5) {
+                top5LessFrequentDescriptions.put(sum, word.toString());
+            } else {
+                int maxKey = Collections.max(top5LessFrequentDescriptions.keySet());
+                if (sum < maxKey) {
+                    top5LessFrequentDescriptions.remove(maxKey);
+                    top5LessFrequentDescriptions.put(sum, word.toString());
+                } else if (sum == maxKey) {
+                    top5LessFrequentDescriptions.compute(maxKey, (k, existingWords) -> existingWords.concat(", ").concat(word.toString()));
+                }
             }
         }
 
         @Override
         protected void cleanup(Context context) throws IOException, InterruptedException {
-            context.write(new Text("Most Frequent Word(s)"), new IntWritable(mostFrequentWordCount));
-            context.write(new Text(mostFrequentWord), new IntWritable(mostFrequentWordCount));
+            TreeMap<Integer, String> sortedMost = new TreeMap<>(Collections.reverseOrder());
+            sortedMost.putAll(top5MostFrequentDescriptions);
 
-            context.write(new Text("Least Frequent Word(s)"), new IntWritable(lessFrequentWordCount));
-            context.write(new Text(lessFrequentWord), new IntWritable(lessFrequentWordCount));
+            context.write(new Text("Top 5 Most Frequent Words:"), null);
+            for (Map.Entry<Integer, String> entry : sortedMost.entrySet()) {
+                context.write(new Text(entry.getValue()), new IntWritable(entry.getKey()));
+            }
+
+            TreeMap<Integer, String> sortedLess = new TreeMap<>();
+            sortedLess.putAll(top5LessFrequentDescriptions);
+
+            context.write(new Text("Top 5 Less Frequent Words:"), null);
+            for (Map.Entry<Integer, String> entry : sortedLess.entrySet()) {
+                context.write(new Text(entry.getValue()), new IntWritable(entry.getKey()));
+            }
 
             context.write(new Text("Total Word Count"), new IntWritable(totalSum));
-        }
-    }
-
-    public class TitleWithDescription {
-        String title;
-        String description;
-
-        public TitleWithDescription(String title, String description) {
-            this.title = title;
-            this.description = description;
-        }
-
-        public String getTitle() {
-            return title;
-        }
-
-        public String getDescription() {
-            return description;
         }
     }
 
