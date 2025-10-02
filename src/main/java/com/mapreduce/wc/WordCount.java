@@ -101,11 +101,14 @@ public class WordCount {
 
         private final Text wordText = new Text();
 
+        private final String[] stopWords = {"de", "em", "para", "a", "o", "e", "do", "da", "que", "com", "um", "uma", "os", "as", "no", "na", "nos", "nas", "por", "se", "ao", "à", "dos", "das"};
+
         public void map(LongWritable key, Text value, Context con) throws IOException, InterruptedException {
             List<String[]> normalizedColumns = WordCount.normalizer.normalize(value);
 
             for (String[] normalizedColumn : normalizedColumns) {
                 String[] words = normalizedColumn[1].split("\\s+");
+                words = Arrays.stream(words).filter(word -> !Arrays.asList(stopWords).contains(word)).toArray(String[]::new);
                 for (String word : words) {
                     if (!word.isEmpty()) {
                         wordText.set(word);
@@ -199,9 +202,14 @@ public class WordCount {
         int longestDescriptionTitleLength = 0;
         String shortestDescriptionTitle = "";
         int shortestDescriptionTitleLength = Integer.MAX_VALUE;
+        int totalSum = 0;
+        int totalTitles = 0;
 
         public void reduce(Text word, Iterable<IntWritable> values, Context con) throws IOException, InterruptedException {
             int sum = values.iterator().next().get();
+
+            totalSum += sum;
+            totalTitles += 1;
 
             if (sum > longestDescriptionTitleLength) {
                 longestDescriptionTitleLength = sum;
@@ -226,6 +234,9 @@ public class WordCount {
 
             context.write(new Text("Shortest Description Title(s)"), new IntWritable(shortestDescriptionTitleLength));
             context.write(new Text(shortestDescriptionTitle), new IntWritable(shortestDescriptionTitleLength));
+
+            int averageWordsPerDescription = totalTitles == 0 ? 0 : totalSum / totalTitles;
+            context.write(new Text("Average Words per Description"), new IntWritable(averageWordsPerDescription));
         }
     }
 }
