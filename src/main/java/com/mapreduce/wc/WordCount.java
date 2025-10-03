@@ -1,6 +1,7 @@
 package com.mapreduce.wc;
 
 import java.io.IOException;
+import java.io.StringReader;
 import java.util.*;
 
 import org.apache.hadoop.conf.Configuration;
@@ -25,6 +26,10 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import org.apache.hadoop.util.GenericOptionsParser;
 
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
+
 public class WordCount {
     static Normalizer normalizer = new Normalizer();
 
@@ -37,9 +42,9 @@ public class WordCount {
             System.exit(-1);
         }
 
-        Path input = new Path(files[0]);
-        Path output = new Path(files[1]);
-        Path output2 = new Path(files[1] + "_2");
+        Path input = new Path(files[1]);
+        Path output = new Path(files[2]);
+        Path output2 = new Path(files[2] + "_2");
 
         Job j = Job.getInstance(c, "list top descriptions");
         j.setJarByClass(WordCount.class);
@@ -70,26 +75,34 @@ public class WordCount {
     }
 
     public static class Normalizer {
-        public List<String[]> normalize(Text value) throws IOException, InterruptedException {
+        public List<String[]> normalize(Text value) throws IOException {
             String text = value.toString().trim();
-
+            List<String[]> normalizedColumns = new ArrayList<>();
             String[] lines = text.split("\\r?\\n");
-
-            ArrayList<String[]> normalizedColumns = new ArrayList<String[]>();
+            CSVFormat csvFormat = CSVFormat.DEFAULT
+                    .builder()
+                    .setSkipHeaderRecord(true)
+                    .build();
 
             for (String line : lines) {
-                String[] columns = line.split(",");
-                String[] newColumns = new String[2];
-
-                String title = columns[2].toLowerCase().replaceAll("[^a-zA-Z0-9\\s]", " ");
-                String description = columns[11].toLowerCase().replaceAll("[^a-zA-Z0-9\\s]", " ");
-
-                newColumns[0] = title;
-                newColumns[1] = description;
-
-                normalizedColumns.add(newColumns);
+                try (CSVParser parser = CSVParser.parse(line, csvFormat)) {
+                    for (CSVRecord record : parser) {
+                        if (record.size() > 11) {
+                            String[] newColumns = new String[2];
+                            String title = record.get(2)
+                                    .toLowerCase()
+                                    .replaceAll("[^a-zA-Z0-9\\s]", " ");
+                            String description = record.get(11)
+                                    .toLowerCase()
+                                    .replaceAll("[^a-zA-Z0-9\\s]", " ");
+                            newColumns[0] = title;
+                            newColumns[1] = description;
+                            normalizedColumns.add(newColumns);
+                        }
+                    }
+                } catch (Exception e) {
+                }
             }
-
             return normalizedColumns;
         }
     }
@@ -99,7 +112,22 @@ public class WordCount {
 
         private final Text wordText = new Text();
 
-        private final String[] stopWords = {"de", "em", "para", "a", "o", "e", "do", "da", "que", "com", "um", "uma", "os", "as", "no", "na", "nos", "nas", "por", "se", "ao", "à", "dos", "das"};
+        private final String[] stopWords = {
+                "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "aren't", "as", "at",
+                "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can't", "cannot", "could",
+                "couldn't", "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during", "each", "few", "for",
+                "from", "further", "had", "hadn't", "has", "hasn't", "have", "haven't", "having", "he", "he'd", "he'll", "he's",
+                "her", "here", "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i", "i'd", "i'll", "i'm",
+                "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself", "let's", "me", "more", "most", "mustn't",
+                "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours",
+                "ourselves", "out", "over", "own", "same", "shan't", "she", "she'd", "she'll", "she's", "should", "shouldn't",
+                "so", "some", "such", "than", "that", "that's", "the", "their", "theirs", "them", "themselves", "then", "there",
+                "there's", "these", "they", "they'd", "they'll", "they're", "they've", "this", "those", "through", "to", "too",
+                "under", "until", "up", "very", "was", "wasn't", "we", "we'd", "we'll", "we're", "we've", "were", "weren't",
+                "what", "what's", "when", "when's", "where", "where's", "which", "while", "who", "who's", "whom", "why", "why's",
+                "with", "won't", "would", "wouldn't", "you", "you'd", "you'll", "you're", "you've", "your", "yours", "yourself",
+                "yourselves", "s"
+        };
 
         public void map(LongWritable key, Text value, Context con) throws IOException, InterruptedException {
             List<String[]> normalizedColumns = WordCount.normalizer.normalize(value);
@@ -118,69 +146,50 @@ public class WordCount {
     }
 
     public static class ReduceForListTopDescriptions extends Reducer<Text, IntWritable, Text, IntWritable> {
-        Map<Integer, String> top5MostFrequentDescriptions = new HashMap<Integer, String>(5);
-        Map<Integer, String> top5LessFrequentDescriptions = new HashMap<Integer, String>() {{
-            put(Integer.MAX_VALUE, "");
-            put(Integer.MAX_VALUE - 1, "");
-            put(Integer.MAX_VALUE - 2, "");
-            put(Integer.MAX_VALUE - 3, "");
-            put(Integer.MAX_VALUE - 4, "");
-        }};
+        TreeMap<Integer, List<String>> top5LessFrequentDescriptions = new TreeMap<>();
+        TreeMap<Integer, List<String>> top5MostFrequentDescriptions = new TreeMap<>(Collections.reverseOrder());
+
         int totalSum = 0;
 
         public void reduce(Text word, Iterable<IntWritable> values, Context con) throws IOException, InterruptedException {
+            if (word.toString().equals("description")) {
+                return;
+            }
             int sum = 0;
-
             for (IntWritable value : values) {
                 sum += value.get();
             }
 
             totalSum += sum;
 
-            if(top5MostFrequentDescriptions.size() < 5) {
-                top5MostFrequentDescriptions.put(sum, word.toString());
-            } else {
-                int minKey = Collections.min(top5MostFrequentDescriptions.keySet());
-                if (sum > minKey) {
-                    top5MostFrequentDescriptions.remove(minKey);
-                    top5MostFrequentDescriptions.put(sum, word.toString());
-                } else if (sum == minKey) {
-                    top5MostFrequentDescriptions.compute(minKey, (k, existingWords) -> existingWords.concat(", ").concat(word.toString()));
-                }
+            top5MostFrequentDescriptions.computeIfAbsent(sum, k -> new ArrayList<>()).add(word.toString());
+            if (top5MostFrequentDescriptions.size() > 5) {
+                top5MostFrequentDescriptions.pollLastEntry();
             }
 
-            if(top5LessFrequentDescriptions.size() < 5) {
-                top5LessFrequentDescriptions.put(sum, word.toString());
-            } else {
-                int maxKey = Collections.max(top5LessFrequentDescriptions.keySet());
-                if (sum < maxKey) {
-                    top5LessFrequentDescriptions.remove(maxKey);
-                    top5LessFrequentDescriptions.put(sum, word.toString());
-                } else if (sum == maxKey) {
-                    top5LessFrequentDescriptions.compute(maxKey, (k, existingWords) -> existingWords.concat(", ").concat(word.toString()));
-                }
+            top5LessFrequentDescriptions.computeIfAbsent(sum, k -> new ArrayList<>()).add(word.toString());
+            if (top5LessFrequentDescriptions.size() > 5) {
+                top5LessFrequentDescriptions.pollLastEntry();
             }
         }
 
         @Override
         protected void cleanup(Context context) throws IOException, InterruptedException {
-            TreeMap<Integer, String> sortedMost = new TreeMap<>(Collections.reverseOrder());
-            sortedMost.putAll(top5MostFrequentDescriptions);
-
             context.write(new Text("Top 5 Most Frequent Words:"), null);
-            for (Map.Entry<Integer, String> entry : sortedMost.entrySet()) {
-                context.write(new Text(entry.getValue()), new IntWritable(entry.getKey()));
+            for (Map.Entry<Integer, List<String>> entry : top5MostFrequentDescriptions.entrySet()) {
+                for (String word : entry.getValue()) {
+                    context.write(new Text(word), new IntWritable(entry.getKey()));
+                }
             }
-
-            TreeMap<Integer, String> sortedLess = new TreeMap<>();
-            sortedLess.putAll(top5LessFrequentDescriptions);
 
             context.write(new Text("Top 5 Less Frequent Words:"), null);
-            for (Map.Entry<Integer, String> entry : sortedLess.entrySet()) {
-                context.write(new Text(entry.getValue()), new IntWritable(entry.getKey()));
+            for (Map.Entry<Integer, List<String>> entry : top5LessFrequentDescriptions.entrySet()) {
+                for (String word : entry.getValue()) {
+                    context.write(new Text(word), new IntWritable(entry.getKey()));
+                }
             }
 
-            context.write(new Text("Total Word Count"), new IntWritable(totalSum));
+            context.write(new Text("Total Word Count:"), new IntWritable(totalSum));
         }
     }
 
@@ -209,6 +218,9 @@ public class WordCount {
         int totalTitles = 0;
 
         public void reduce(Text word, Iterable<IntWritable> values, Context con) throws IOException, InterruptedException {
+            if (word.toString().equals("title")) {
+                return;
+            }
             int sum = values.iterator().next().get();
 
             totalSum += sum;
@@ -217,15 +229,13 @@ public class WordCount {
             if (sum > longestDescriptionTitleLength) {
                 longestDescriptionTitleLength = sum;
                 longestDescriptionTitle = word.toString();
-            } 
-            if (sum == longestDescriptionTitleLength) {
+            } else if (sum == longestDescriptionTitleLength) {
                 longestDescriptionTitle = longestDescriptionTitle.concat(", ").concat(word.toString());
-            } 
+            }
             if (sum < shortestDescriptionTitleLength) {
                 shortestDescriptionTitleLength = sum;
                 shortestDescriptionTitle = word.toString();
-            }
-            if (sum == shortestDescriptionTitleLength) {
+            } else if (sum == shortestDescriptionTitleLength) {
                 shortestDescriptionTitle = shortestDescriptionTitle.concat(", ").concat(word.toString());
             }
         }
